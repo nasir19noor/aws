@@ -8,7 +8,7 @@ on:
       - '!main'
     paths:
       - 'infrastructure/services/**.tf' 
-      - 'infrastructure/services/**.tfvars'  
+      - 'infrastructure/services/**.tfvars'
       - '.github/workflows/tf-plan.yml'
 
 env:
