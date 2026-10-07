@@ -1,0 +1,61 @@
+aws:
+  global:
+    region: "ap-southeast-1"
+    state_bucket: "lab.nasir.id"
+  network:
+    vpc_name: "nasir-vpc"
+    description: "eks-vpc"
+    cidr_block: "10.1.0.0/16"
+    instance_tenancy: "default"
+    enable_dns_support: true
+    enable_dns_hostnames: true
+    subnet_name: "nasir-subnet"
+    subnet_count: 3
+    subnet_mask: "24"
+  s3:
+    bucket_name_wordpress: "wordpress.nasir.id"
+  acm:
+    domain_name_nasir: "assets.nasir.id" 
+    domain_name_itung_nasir: "assets.itung.nasir.id" 
+    domain_name_pulsara_nasir: "assets.pulsara.nasir.id"
+    domain_name_shortener_nasir: "s.nasir.id"
+    domain_name_api_mbg_nasir: "api.mbg.nasir.id"
+    domain_name_antri_nasir: "antri.nasir.id"
+    create_route53_records: false
+    validation_method: "DNS"
+  cloudfront:
+    domain_name_nasir: "assets.nasir.id"
+    domain_name_itung: "assets.itung.nasir.id"
+    domain_name_pulsara: "assets.pulsara.nasir.id"
+  ec2:
+    kafka: 
+      name: "management-eks"
+    instance_type: "t3.small"
+    ami: "ami-0c1907b6d738188e5"
+    root_block_device:
+      volume_size : 50
+      volume_type: "gp3"
+      delete_on_termination: true
+      encrypted: true
+  api-gateway:
+    name-shortener: "shortener-api-gateway" 
+  lambda:    
+    name-shortener: "shortener-lambda" 
+    name-mbg: "mbg-lambda"
+  dynamodb:
+    name-shortener: "shortener-dynamodb" 
+    name-mbg: "mbg-dynamodb" 
+  cognito:
+    cognito_name_mbg: "mbg"
+    cognito_name_layarsehat: "layarsehat"      
+cloudflare:
+  zone_name: "nasir.id"
+  root: "@"
+contabo:
+  ip: "161.97.100.1"  
+
+  
+      
+ 
+
+
