@@ -1,12 +1,12 @@
-name: 'AWS Apply'
+name: 'Terraform Apply'
 
 on:
   push:
     branches:
       - main
     paths:
-      - 'infratsructure/services/**.tf' 
-      - 'infratsructure/services/**.tfvars'  
+      - 'infrastructure/services/**.tf' 
+      - 'infrastructure/services/**.tfvars'  
       - '.github/workflows/tf-apply.yml'
 
 env:
