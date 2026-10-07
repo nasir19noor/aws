@@ -39,10 +39,10 @@ jobs:
             
             if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
               echo "Base SHA is empty or zero. Using all terraform files."
-              CHANGED_FILES=$(find aws/services -type f -name "*.tf" -o -name "*.tfvars" | sort)
+              CHANGED_FILES=$(find infrastructure/services -type f -name "*.tf" -o -name "*.tfvars" | sort)
             else
               echo "Comparing $BASE_SHA with $HEAD_SHA"
-              CHANGED_FILES=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -E '^aws/services/.*\.(tf|tfvars)$' || echo "")
+              CHANGED_FILES=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -E '^infrastructure/services/.*\.(tf|tfvars)$' || echo "")
             fi
             
           elif [ "${{ github.event_name }}" == "push" ]; then
@@ -52,14 +52,14 @@ jobs:
             
             if [ -z "$BEFORE_SHA" ] || [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
               echo "Before SHA is empty or zero. Getting all committed files."
-              CHANGED_FILES=$(git ls-tree --name-only -r HEAD | grep -E '^aws/services/.*\.(tf|tfvars)$' || echo "")
+              CHANGED_FILES=$(git ls-tree --name-only -r HEAD | grep -E '^infrastructure/services/.*\.(tf|tfvars)$' || echo "")
             else
               echo "Comparing $BEFORE_SHA with $AFTER_SHA"
-              CHANGED_FILES=$(git diff --name-only "$BEFORE_SHA" "$AFTER_SHA" | grep -E '^aws/services/.*\.(tf|tfvars)$' || echo "")
+              CHANGED_FILES=$(git diff --name-only "$BEFORE_SHA" "$AFTER_SHA" | grep -E '^infrastructure/services/.*\.(tf|tfvars)$' || echo "")
             fi
           else
             echo "Processing other event type"
-            CHANGED_FILES=$(find aws/services -type f -name "*.tf" -o -name "*.tfvars" | sort)
+            CHANGED_FILES=$(find infrastructure/services -type f -name "*.tf" -o -name "*.tfvars" | sort)
           fi
           
           # Process the changed files to get directories
