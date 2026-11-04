@@ -1,0 +1,108 @@
+# Landing zone configuration. Every stage reads this file; nothing is
+# hard-coded in the Terraform. Layout follows ollionorg/aws-landing-zone,
+# reduced to free resources and GitHub Actions.
+
+global:
+  home_region: "ap-southeast-1"                          # Identity Center, state bucket, CloudTrail
+  management_account_id: "647459380434"                  # existing organization r-iyjk
+  lz_state_bucket: "nasir-aws-terraform-state"           # must match global-lz-state-backend.conf
+  switch_role_to_assume: "OrganizationAccountAccessRole" # role Terraform assumes in member accounts
+
+bootstrap:
+  cicd:                                                  # GitHub Actions through OIDC (no CodePipeline)
+    git_repo: "nasir19noor/aws"
+    git_repo_id: "742005119"                             # immutable: survives renames and transfers
+    git_owner_id: "330575"
+    git_branch: "main"
+    create_oidc_provider: false                          # already exists in 647459380434; reused, not managed
+    role_name: "github-terraform"
+
+org:
+  common:
+    target_regions:                                      # member accounts may only use these, apart from global services
+      - "ap-southeast-1"
+
+  cloudtrail:
+    name: "org-trail"                                    # organization trail, in the management account
+    bucket: "nasir-aws-org-cloudtrail"                   # in Log Archive; S3 names are global
+
+  billing:
+    budget_usd: 10                                       # a month, whole organization
+    alert_at: [50, 90, 100]                              # percent of actual spend; plus 100 % forecast
+    email: "nasir@nasir.id"
+
+  # Identity Center users: the @nasir.id users of Google Cloud Identity.
+  permission_sets_principal:
+    organization_admin: "aws-admin@nasir.id"
+    billing_admin: "aws-billing@nasir.id"
+    network_admin: "aws-network@nasir.id"
+    security_admin: "aws-security@nasir.id"
+    devops: "aws-devops@nasir.id"
+    developers: "aws-developers@nasir.id"
+
+  # OUs, their accounts and the SCPs (file names in terraform/scp-stored,
+  # without .json) attached to each. Account e-mails must be unique across AWS
+  # and must receive mail.
+  org_hierarchy:
+    security:
+      name: "Security"
+      scps: ["denyLeaveOrganization", "denyRootPolicy", "denyCloudtrailChanges", "denyAllRegionsExceptSome"]
+      accounts:
+        log_archive_account:
+          name: "Log Archive"                            # org CloudTrail bucket
+          email: "nasir+aws-security-logs@nasir.id"
+          scps: ["denyS3Modification"]
+        security_tooling_account:
+          name: "Security Tooling"                       # delegated admin: IAM Access Analyzer
+          email: "nasir+aws-security-tools@nasir.id"
+          scps: []
+    infrastructure:
+      name: "Infrastructure"
+      scps: ["denyLeaveOrganization", "denyRootPolicy", "denyCloudtrailChanges", "denyAllRegionsExceptSome"]
+      accounts:
+        network_hub_account:
+          name: "Network Hub"                            # shared networking; empty until a paid hub (TGW) is wanted
+          email: "nasir+aws-network@nasir.id"
+          scps: []
+        shared_services_account:
+          name: "Shared Services"                        # tools shared by all environments (e.g. ECR, DNS zones)
+          email: "nasir+aws-shared-services@nasir.id"
+          scps: []
+    workloads:
+      name: "Workloads"
+      scps: ["denyLeaveOrganization", "denyRootPolicy", "denyCloudtrailChanges", "denyAllRegionsExceptSome"]
+      accounts: {}
+      sub_ous:
+        prod:
+          name: "Prod"
+          scps: []
+          accounts:
+            prod_master_account:
+              name: "Prod Master"
+              email: "nasir+aws-prod@nasir.id"
+              scps: []
+        nonprod:
+          name: "NonProd"
+          scps: []
+          accounts:
+            nonprod_master_account:
+              name: "NonProd Master"
+              email: "nasir+aws-nonprod@nasir.id"
+              scps: []
+    suspended:
+      name: "Suspended"                                  # accounts waiting to be closed
+      scps: ["denyAll"]
+      accounts: {}
+
+# 3-env: one VPC per environment, in its master account. No NAT gateway.
+env:
+  prod:
+    env: "prod"
+    account: "prod_master_account"
+    vpc_name: "vpc-prod"
+    vpc_cidr: "10.30.0.0/16"
+  nonprod:
+    env: "nonprod"
+    account: "nonprod_master_account"
+    vpc_name: "vpc-nonprod"
+    vpc_cidr: "10.40.0.0/16"

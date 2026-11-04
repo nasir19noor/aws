@@ -1,0 +1,293 @@
+name: terraform
+
+# Deploys only the stages that changed, one job per stage.
+#   pull request   -> fmt + validate the changed stages (no AWS access: the
+#                     role trusts main only)
+#   push to main   -> plan + apply the changed stages
+#   manual run     -> the stages you name (default: all), plan, apply, or
+#                     auth-check (proves the GitHub -> AWS sign-in works)
+#
+# A stage is a folder with its own state: 1-org, 1-org/cloudtrail,
+# 3-env/prod/vpc, ... A changed file belongs to the deepest stage folder that
+# contains it. The stages read each other's outputs through
+# terraform_remote_state, so:
+#   - the jobs run one at a time, in ORDER, and stop at the first failure;
+#   - a changed stage also brings in the stages that read its outputs;
+#   - lzconfig.yaml, global-lz-state-backend.conf, terraform/modules or this
+#     file changing deploys every stage; terraform/scp-stored deploys 1-org.
+# 0-bootstrap/* is applied by hand and only validated here. Stages listed in
+# ORDER that don't exist yet are skipped.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "1-org/**"
+      - "2-network/**"
+      - "3-env/**"
+      - "terraform/**"
+      - "lzconfig.yaml"
+      - "global-lz-state-backend.conf"
+      - ".github/workflows/terraform.yml"
+  pull_request:
+    paths:
+      - "0-bootstrap/**"
+      - "1-org/**"
+      - "2-network/**"
+      - "3-env/**"
+      - "terraform/**"
+      - "lzconfig.yaml"
+      - "global-lz-state-backend.conf"
+      - ".github/workflows/terraform.yml"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "plan, plan and apply, or only check the sign-in"
+        type: choice
+        options: [plan, apply, auth-check]
+        default: plan
+      stages:
+        description: "Stage folders, space-separated, e.g. 1-org 1-org/cloudtrail (empty = all)"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: terraform
+  cancel-in-progress: false
+
+env:
+  TF_VERSION: "1.14.3"
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  detect-changed-stages:
+    name: Detect changed stages
+    runs-on: ubuntu-latest
+    outputs:
+      stages: ${{ steps.find.outputs.stages }}
+      bootstrap: ${{ steps.find.outputs.bootstrap }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Find changed stages
+        id: find
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          INPUT_STAGES: ${{ inputs.stages }}
+        run: |
+          ORDER="
+            1-org
+            1-org/logging-buckets
+            1-org/cloudtrail
+            1-org/billing
+            1-org/permission-sets
+            1-org/aws-secure-baseline/iam-ebs-secure-baselines
+            1-org/aws-secure-baseline/s3-baseline
+            1-org/aws-secure-baseline/access-analyzer
+            3-env/prod/vpc
+            3-env/nonprod/vpc
+          "
+          BOOTSTRAP_STAGES="0-bootstrap/tf-prerequisites 0-bootstrap/bootstrap"
+
+          # Stages that read each stage's outputs.
+          declare -A READERS=(
+            [1-org]="1-org/logging-buckets 1-org/cloudtrail 1-org/billing 1-org/permission-sets 1-org/aws-secure-baseline/iam-ebs-secure-baselines 1-org/aws-secure-baseline/s3-baseline 1-org/aws-secure-baseline/access-analyzer 3-env/prod/vpc 3-env/nonprod/vpc"
+            [1-org/logging-buckets]="1-org/cloudtrail"
+          )
+
+          ZERO=0000000000000000000000000000000000000000
+          case "$EVENT" in
+            pull_request) BASE="$PR_BASE" ;;
+            push)         BASE="$BEFORE" ;;
+            *)            BASE="" ;;
+          esac
+
+          declare -A PICK=()
+          BOOT=""
+          if [ "$EVENT" = workflow_dispatch ]; then
+            for s in ${INPUT_STAGES:-$ORDER}; do PICK[$s]=1; done
+          elif [ -z "$BASE" ] || [ "$BASE" = "$ZERO" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            echo "No usable base commit: every stage."
+            for s in $ORDER; do PICK[$s]=1; done
+          else
+            CHANGED=$(git diff --name-only "$BASE" "$AFTER")
+            echo "Changed files:"; echo "$CHANGED"
+            if echo "$CHANGED" | grep -qE '^(lzconfig\.yaml|global-lz-state-backend\.conf|\.github/workflows/terraform\.yml|terraform/modules/.*)$'; then
+              for s in $ORDER; do PICK[$s]=1; done
+            fi
+            if echo "$CHANGED" | grep -q '^terraform/scp-stored/'; then PICK[1-org]=1; fi
+            # Each file belongs to the deepest stage folder containing it.
+            while read -r f; do
+              [ -n "$f" ] || continue
+              best=""
+              for s in $ORDER $BOOTSTRAP_STAGES; do
+                case "$f" in "$s"/*) if [ ${#s} -gt ${#best} ]; then best=$s; fi ;; esac
+              done
+              case "$best" in
+                "") ;;
+                0-bootstrap/*) BOOT="$BOOT $best" ;;
+                *) PICK[$best]=1 ;;
+              esac
+            done <<< "$CHANGED"
+          fi
+
+          # Add the readers of every picked stage (ORDER is topological, so
+          # one pass in order reaches the whole chain).
+          for s in $ORDER; do
+            if [ -n "${PICK[$s]:-}" ]; then
+              for r in ${READERS[$s]:-}; do PICK[$r]=1; done
+            fi
+          done
+
+          STAGES=""
+          for s in $ORDER; do
+            if [ -n "${PICK[$s]:-}" ]; then
+              if ls "$s"/*.tf >/dev/null 2>&1; then STAGES="$STAGES $s"; else echo "$s: not written yet, skipped"; fi
+            fi
+          done
+          echo "stages=$(printf '%s\n' $STAGES | jq -R -s -c 'split("\n") | map(select(length > 0))')" >> "$GITHUB_OUTPUT"
+          echo "bootstrap=$(printf '%s\n' $BOOT | sort -u | jq -R -s -c 'split("\n") | map(select(length > 0))')" >> "$GITHUB_OUTPUT"
+          echo "Stages, in order:${STAGES:- none}"
+          echo "Bootstrap folders changed:${BOOT:- none}"
+
+  validate:
+    name: Validate
+    needs: detect-changed-stages
+    if: needs.detect-changed-stages.outputs.stages != '[]' || needs.detect-changed-stages.outputs.bootstrap != '[]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Format
+        run: terraform fmt -check -recursive -diff
+
+      - name: Validate
+        env:
+          STAGES: ${{ needs.detect-changed-stages.outputs.stages }}
+          BOOTSTRAP: ${{ needs.detect-changed-stages.outputs.bootstrap }}
+        run: |
+          list=$(echo "$STAGES $BOOTSTRAP" | jq -r -s 'add | .[]')
+          for stage in $list; do
+            echo "::group::$stage"
+            terraform -chdir="$stage" init -backend=false
+            terraform -chdir="$stage" validate
+            echo "::endgroup::"
+          done
+
+  # Manual run with action = auth-check: signs in and lists the state bucket,
+  # nothing else.
+  auth-check:
+    name: Auth check
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'auth-check'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check AWS_ROLE_ARN
+        env:
+          ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+        run: |
+          if [ -z "$ROLE_ARN" ]; then
+            echo "::error::Set the repository variable AWS_ROLE_ARN (Settings > Secrets and variables > Actions > Variables) to the role_arn output of 0-bootstrap/bootstrap."
+            exit 1
+          fi
+
+      - name: Region
+        id: region
+        run: echo "region=$(yq '.global.home_region' lzconfig.yaml)" >> "$GITHUB_OUTPUT"
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ steps.region.outputs.region }}
+          role-session-name: github-auth-check-${{ github.run_id }}
+
+      - name: Who am I, and can I reach the state bucket
+        run: |
+          aws sts get-caller-identity
+          aws s3 ls "s3://$(yq '.global.lz_state_bucket' lzconfig.yaml)/"
+
+  terraform:
+    name: ${{ matrix.stage }}
+    needs: [detect-changed-stages, validate]
+    if: >-
+      github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+      && inputs.action != 'auth-check'
+      && needs.detect-changed-stages.outputs.stages != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      # One at a time, in ORDER: each stage reads the state of the ones
+      # before it. Stop at the first failure so nothing builds on a broken stage.
+      max-parallel: 1
+      fail-fast: true
+      matrix:
+        stage: ${{ fromJSON(needs.detect-changed-stages.outputs.stages) }}
+    defaults:
+      run:
+        working-directory: ${{ matrix.stage }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check AWS_ROLE_ARN
+        env:
+          ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+        run: |
+          if [ -z "$ROLE_ARN" ]; then
+            echo "::error::Set the repository variable AWS_ROLE_ARN (Settings > Secrets and variables > Actions > Variables) to the role_arn output of 0-bootstrap/bootstrap."
+            exit 1
+          fi
+
+      - name: Region
+        id: region
+        working-directory: .
+        run: echo "region=$(yq '.global.home_region' lzconfig.yaml)" >> "$GITHUB_OUTPUT"
+
+      # OIDC: GitHub's token is exchanged for credentials of the
+      # github-terraform role; no access key exists.
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ steps.region.outputs.region }}
+          role-session-name: github-${{ github.run_id }}
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        run: terraform init -backend-config="$GITHUB_WORKSPACE/global-lz-state-backend.conf"
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          set +e
+          terraform plan -out=tfplan -detailed-exitcode
+          code=$?
+          set -e
+          if [ "$code" = 1 ]; then exit 1; fi
+          echo "changes=$([ "$code" = 2 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          if [ "$code" = 2 ]; then
+            echo "### ${{ matrix.stage }}: changes" >> "$GITHUB_STEP_SUMMARY"
+            { echo '```'; terraform show -no-color tfplan | tail -n 200; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### ${{ matrix.stage }}: no changes" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Terraform Apply
+        if: steps.plan.outputs.changes == 'true' && (github.event_name == 'push' || inputs.action == 'apply')
+        run: terraform apply tfplan
