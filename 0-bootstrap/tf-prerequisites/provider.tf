@@ -5,9 +5,8 @@ provider "aws" {
   allowed_account_ids = [local.lz_config.global.management_account_id]
 
   default_tags {
-    tags = {
-      managed-by = "terraform"
-      stage      = "0-bootstrap/tf-prerequisites"
-    }
+    tags = merge(local.lz_config.global.default_tags, {
+      stage = "0-bootstrap/tf-prerequisites"
+    })
   }
 }

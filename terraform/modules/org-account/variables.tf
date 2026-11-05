@@ -29,3 +29,15 @@ variable "attached_policy" {
   type        = list(string)
   default     = []
 }
+
+variable "iam_user_access_to_billing" {
+  description = "ALLOW or DENY: IAM users and roles with permission may see billing"
+  type        = string
+  default     = "ALLOW"
+}
+
+variable "close_on_deletion" {
+  description = "Close the account when it is removed from Terraform"
+  type        = bool
+  default     = false
+}

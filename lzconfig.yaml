@@ -7,6 +7,9 @@ global:
   management_account_id: "647459380434"                  # existing organization r-iyjk
   lz_state_bucket: "nasir-aws-terraform-state"           # must match global-lz-state-backend.conf
   switch_role_to_assume: "OrganizationAccountAccessRole" # role Terraform assumes in member accounts
+  terraform_version: "1.14.3"                            # used by the GitHub Actions workflow
+  default_tags:                                          # on every resource; each stage adds stage = <folder>
+    managed-by: "terraform"
 
 bootstrap:
   cicd:                                                  # GitHub Actions through OIDC (no CodePipeline)
@@ -16,6 +19,14 @@ bootstrap:
     git_branch: "main"
     create_oidc_provider: false                          # already exists in 647459380434; reused, not managed
     role_name: "github-terraform"
+    role_policy_arn: "arn:aws:iam::aws:policy/AdministratorAccess" # manages the org and assumes the switch role
+    max_session_duration: 3600                           # seconds; one CI run must fit
+  org:
+    service_access_principals:                           # trusted access added to what is already enabled
+      - "access-analyzer.amazonaws.com"                  # org-wide external access analyzer
+      - "account.amazonaws.com"                          # account settings of member accounts
+      - "cloudtrail.amazonaws.com"                       # organization trail
+      - "sso.amazonaws.com"                              # IAM Identity Center
 
 org:
   common:
@@ -24,14 +35,34 @@ org:
 
   cloudtrail:
     name: "org-trail"                                    # organization trail, in the management account
-    bucket: "nasir-aws-org-cloudtrail"                   # in Log Archive; S3 names are global
+    bucket: "nasir-aws-org-cloudtrail"                   # S3 names are global
+    bucket_account: "log_archive_account"                # account key the bucket lives in
+    bucket_versioning: true
+    multi_region_trail: true
+    include_global_service_events: true
+    log_file_validation: true
+
+  access_analyzer:
+    admin_account: "security_tooling_account"            # account key of the delegated administrator
+    analyzer_name: "org-external-access"                 # organization-wide external access analyzer (free)
 
   billing:
-    budget_usd: 10                                       # a month, whole organization
-    alert_at: [50, 90, 100]                              # percent of actual spend; plus 100 % forecast
+    budget_name: "org-monthly"
+    budget_usd: 5                                       # a month, whole organization
+    currency: "USD"
+    alert_at: [50, 90, 100]                              # percent of actual spend
+    forecast_alert_at: 100                               # percent of forecast spend
     email: "nasir@nasir.id"
 
-  # Identity Center users: the @nasir.id users of Google Cloud Identity.
+  # Settings of every member account 1-org creates.
+  account_defaults:
+    iam_user_access_to_billing: "ALLOW"                  # IAM users/roles with permission may see billing
+    close_on_deletion: false                             # removing an account from this file doesn't close it
+
+  # Identity Center users: the @nasir.id users of Google Cloud Identity, by job
+  # role. A value can be one e-mail or a list of e-mails. Each e-mail must be the
+  # primary e-mail of a Cloud Identity user; 1-org/permission-sets creates the
+  # matching Identity Center user (Cloud Identity Free can't provision it).
   permission_sets_principal:
     organization_admin: "aws-admin@nasir.id"
     billing_admin: "aws-billing@nasir.id"
@@ -39,6 +70,63 @@ org:
     security_admin: "aws-security@nasir.id"
     devops: "aws-devops@nasir.id"
     developers: "aws-developers@nasir.id"
+
+  # 1-org/permission-sets: the AWS roles people get (AWS managed policies only).
+  permission_sets:
+    AdministratorAccess:
+      policy: "arn:aws:iam::aws:policy/AdministratorAccess"
+      session_duration: "PT4H"
+    PowerUserAccess:
+      policy: "arn:aws:iam::aws:policy/PowerUserAccess"
+      session_duration: "PT8H"
+    ReadOnlyAccess:
+      policy: "arn:aws:iam::aws:policy/ReadOnlyAccess"
+      session_duration: "PT8H"
+    Billing:
+      policy: "arn:aws:iam::aws:policy/job-function/Billing"
+      session_duration: "PT4H"
+  # Permission sets that already exist in Identity Center (made by hand) and
+  # are imported instead of created.
+  existing_permission_sets: ["AdministratorAccess"]
+
+  # Who gets which permission set where, by job role. A target is
+  # "management", an OU key (every account in that OU and its sub-OUs, including
+  # accounts added later) or an account key.
+  access:
+    organization_admin:
+      management: "AdministratorAccess"
+      security: "AdministratorAccess"
+      infrastructure: "AdministratorAccess"
+      workloads: "AdministratorAccess"
+    billing_admin:
+      management: "Billing"
+    security_admin:
+      management: "ReadOnlyAccess"
+      security: "AdministratorAccess"
+      infrastructure: "ReadOnlyAccess"
+      workloads: "ReadOnlyAccess"
+    network_admin:
+      network_hub_account: "AdministratorAccess"
+      workloads: "PowerUserAccess"
+    devops:
+      shared_services_account: "PowerUserAccess"
+      workloads: "PowerUserAccess"
+    developers:
+      shared_services_account: "ReadOnlyAccess"
+      prod: "ReadOnlyAccess"
+      nonprod: "PowerUserAccess"
+
+  # 1-org/aws-secure-baseline/iam-ebs-secure-baselines, every member account.
+  password_policy:
+    minimum_length: 14
+    require_lowercase: true
+    require_uppercase: true
+    require_numbers: true
+    require_symbols: true
+    allow_user_change: true
+    hard_expiry: false
+    maximum_age: 90
+    reuse_history: 24
 
   # OUs, their accounts and the SCPs (file names in terraform/scp-stored,
   # without .json) attached to each. Account e-mails must be unique across AWS
@@ -95,14 +183,24 @@ org:
       accounts: {}
 
 # 3-env: one VPC per environment, in its master account. No NAT gateway.
+# One public and one private subnet per AZ (a, b, c, ... in order), so both
+# lists must have the same length.
 env:
   prod:
     env: "prod"
     account: "prod_master_account"
     vpc_name: "vpc-prod"
     vpc_cidr: "10.30.0.0/16"
+    public_subnets: ["10.30.0.0/24", "10.30.1.0/24", "10.30.2.0/24"]
+    private_subnets: ["10.30.10.0/24", "10.30.11.0/24", "10.30.12.0/24"]
+    map_public_ip_on_launch: false                       # ask for a public IP per instance instead
+    gateway_endpoints: ["s3", "dynamodb"]                # free; interface endpoints are paid
   nonprod:
     env: "nonprod"
     account: "nonprod_master_account"
     vpc_name: "vpc-nonprod"
     vpc_cidr: "10.40.0.0/16"
+    public_subnets: ["10.40.0.0/24", "10.40.1.0/24", "10.40.2.0/24"]
+    private_subnets: ["10.40.10.0/24", "10.40.11.0/24", "10.40.12.0/24"]
+    map_public_ip_on_launch: false
+    gateway_endpoints: ["s3", "dynamodb"]

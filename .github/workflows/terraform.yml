@@ -59,8 +59,8 @@ concurrency:
   group: terraform
   cancel-in-progress: false
 
+# The Terraform version and region come from lzconfig.yaml (global.*).
 env:
-  TF_VERSION: "1.14.3"
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "false"
 
@@ -168,9 +168,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Settings
+        id: lz
+        run: echo "terraform_version=$(yq '.global.terraform_version' lzconfig.yaml)" >> "$GITHUB_OUTPUT"
+
       - uses: hashicorp/setup-terraform@v4
         with:
-          terraform_version: ${{ env.TF_VERSION }}
+          terraform_version: ${{ steps.lz.outputs.terraform_version }}
 
       - name: Format
         run: terraform fmt -check -recursive -diff
@@ -251,10 +255,12 @@ jobs:
             exit 1
           fi
 
-      - name: Region
+      - name: Settings
         id: region
         working-directory: .
-        run: echo "region=$(yq '.global.home_region' lzconfig.yaml)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "region=$(yq '.global.home_region' lzconfig.yaml)" >> "$GITHUB_OUTPUT"
+          echo "terraform_version=$(yq '.global.terraform_version' lzconfig.yaml)" >> "$GITHUB_OUTPUT"
 
       # OIDC: GitHub's token is exchanged for credentials of the
       # github-terraform role; no access key exists.
@@ -266,7 +272,7 @@ jobs:
 
       - uses: hashicorp/setup-terraform@v4
         with:
-          terraform_version: ${{ env.TF_VERSION }}
+          terraform_version: ${{ steps.region.outputs.terraform_version }}
           terraform_wrapper: false
 
       - name: Terraform Init

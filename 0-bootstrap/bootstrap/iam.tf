@@ -33,7 +33,7 @@ data "aws_iam_openid_connect_provider" "github" {
 resource "aws_iam_role" "github" {
   name                 = local.cicd.role_name
   description          = "Assumed by ${local.cicd.git_repo} (${local.cicd.git_branch}) to deploy the landing zone."
-  max_session_duration = 3600
+  max_session_duration = local.cicd.max_session_duration
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -52,9 +52,9 @@ resource "aws_iam_role" "github" {
 
 # The landing zone manages the organization, accounts, SCPs, Identity Center,
 # CloudTrail and IAM, and assumes OrganizationAccountAccessRole in the member
-# accounts, so the role is an administrator. Only main of this repository can
-# assume it.
+# accounts, so the role is an administrator (bootstrap.cicd.role_policy_arn).
+# Only main of this repository can assume it.
 resource "aws_iam_role_policy_attachment" "github_admin" {
   role       = aws_iam_role.github.name
-  policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
+  policy_arn = local.cicd.role_policy_arn
 }

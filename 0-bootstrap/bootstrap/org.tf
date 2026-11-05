@@ -10,13 +10,8 @@ import {
 }
 
 locals {
-  # Trusted access the landing zone needs.
-  service_principals = [
-    "access-analyzer.amazonaws.com", # org-wide external access analyzer
-    "account.amazonaws.com",         # account settings of member accounts
-    "cloudtrail.amazonaws.com",      # organization trail
-    "sso.amazonaws.com",             # IAM Identity Center
-  ]
+  # Trusted access the landing zone needs (bootstrap.org in lzconfig.yaml).
+  service_principals = local.lz_config.bootstrap.org.service_access_principals
 
   enabled_policy_types = [
     for p in data.aws_organizations_organization.current.roots[0].policy_types : p.type if p.status == "ENABLED"

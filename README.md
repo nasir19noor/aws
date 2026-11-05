@@ -19,9 +19,9 @@ The structure follows
   CodeBuild or CodeStar connection: GitHub Actions assumes a role in the
   management account through OIDC.
 
-> **Status:** `lzconfig.yaml`, `0-bootstrap` (both folders), `1-org` and the
-> workflow are written; nothing is applied yet. The `1-org/*` services and
-> `3-env` are added next. This README is updated with every change.
+> **Status:** `0-bootstrap` (both folders) and `1-org` are applied (6 member
+> accounts created). The `1-org/*` services and `3-env/*/vpc` are written and
+> deploy on the next push. This README is updated with every change.
 
 ## Decisions
 
@@ -92,7 +92,7 @@ aws/
 │   ├── prod/vpc/                         VPC in Prod Master
 │   └── nonprod/vpc/                      VPC in NonProd Master
 ├── terraform/
-│   ├── modules/                          organization-unit, org-account, ... (plus nasir19noor/terraform modules)
+│   ├── modules/                          organization-unit, org-account, aws-secure-baseline/*, env-vpc (plus nasir19noor/terraform modules)
 │   └── scp-stored/                       SCP JSON templates
 ├── docs/                                 guides
 └── .github/workflows/terraform.yml       deploys the changed stages
@@ -104,6 +104,37 @@ read earlier ones through `terraform_remote_state` (for example the account
 IDs from `1-org`). Member accounts are reached by assuming
 `OrganizationAccountAccessRole`, which Organizations creates in every
 account it creates.
+
+## Settings (`lzconfig.yaml`)
+
+Every setting is in `lzconfig.yaml`; the Terraform only reads it.
+
+| Section | What it sets | Used by |
+|---|---|---|
+| `global` | Home region, management account, state bucket, switch role, Terraform version, default tags (each stage adds `stage = <folder>`) | every stage, the workflow |
+| `bootstrap.cicd` | GitHub repository and IDs, OIDC provider (create or reuse), CI role name, policy and session length | `0-bootstrap/bootstrap` |
+| `bootstrap.org` | Trusted access added to the organization | `0-bootstrap/bootstrap` |
+| `org.common` | Regions member accounts may use | `1-org` (SCP) |
+| `org.cloudtrail` | Trail name and options, bucket name, account and versioning | `1-org`, `logging-buckets`, `cloudtrail` |
+| `org.access_analyzer` | Delegated administrator account, analyzer name | `access-analyzer` |
+| `org.billing` | Budget name, amount, currency, alert thresholds, e-mail | `billing` |
+| `org.account_defaults` | Billing access for IAM users, close-on-deletion | `1-org` |
+| `org.permission_sets_principal`, `org.permission_sets`, `org.existing_permission_sets`, `org.access` | Who, which roles, and where | `permission-sets` |
+| `org.password_policy` | IAM password policy | `iam-ebs-secure-baselines` |
+| `org.org_hierarchy` | OUs, sub-OUs, accounts, SCP attachments | `1-org`, `permission-sets` |
+| `env.<env>` | Account, VPC name and CIDR, public and private subnets (one each per AZ), public IPs on launch, gateway endpoints | `3-env/<env>/vpc` |
+
+What stays in the code, because Terraform can't take it from a file or on
+purpose:
+
+- module `source` refs (pinned commits), `backend.tf` keys and
+  `global-lz-state-backend.conf` (a copy of `global.lz_state_bucket` and
+  `home_region`; keep them in step): Terraform doesn't allow variables there;
+- one provider and module call per account in the two baseline folders:
+  Terraform can't loop providers;
+- security and cost guarantees: SSE-S3 instead of KMS, Block Public Access,
+  bucket-owner-enforced, `force_destroy = false` on the state bucket, the
+  default security group with no rules.
 
 ## SCPs (`terraform/scp-stored`)
 
@@ -204,19 +235,50 @@ From `org.org_hierarchy` in `lzconfig.yaml`, with the modules
 
 Outputs: `accounts_id_map`, `ou_id_map`, `root_id`, used by every later stage.
 
-### 1-org services (GitHub Actions, to be written)
+### 1-org services (GitHub Actions)
+
+Each folder is its own Terraform root; it reads the account IDs from the
+`1-org` state and reaches member accounts through
+`OrganizationAccountAccessRole`.
 
 | Folder | Account | What (all free) |
 |---|---|---|
-| `1-org/logging-buckets` | Log Archive | Bucket `nasir-aws-org-cloudtrail`: versioned, SSE-S3, public access blocked, TLS only, bucket policy for CloudTrail |
-| `1-org/cloudtrail` | management | Organization trail `org-trail`: management events of every account and region, log file validation. The first copy of management events is free. |
-| `1-org/billing` | management | AWS Budget: USD 10 a month for the organization, e-mail to `nasir@nasir.id` at 50 / 90 / 100 % actual and 100 % forecast |
-| `1-org/permission-sets` | management | Identity Center permission sets, users and account assignments (table below) |
-| `1-org/aws-secure-baseline/iam-ebs-secure-baselines` | every member account | IAM password policy, EBS encryption by default (AWS managed key) |
+| `1-org/logging-buckets` | Log Archive | Bucket `nasir-aws-org-cloudtrail` (`s3` module of nasir19noor/terraform): versioned, SSE-S3, bucket-owner-enforced, public access blocked, TLS only. The bucket policy lets CloudTrail write only for `org-trail`. Nothing is ever deleted from it automatically. |
+| `1-org/cloudtrail` | management | Organization trail `org-trail`: management events of every account and region, log file validation. Data events, Insights, CloudWatch Logs delivery and KMS (all paid) are off. |
+| `1-org/billing` | management | AWS Budget `org-monthly`: USD 10 a month for the organization, e-mail to `nasir@nasir.id` at 50 / 90 / 100 % actual and 100 % forecast. No budget actions. |
+| `1-org/permission-sets` | management | Identity Center permission sets, users and account assignments, from `org.permission_sets`, `org.permission_sets_principal` and `org.access` (table below) |
+| `1-org/aws-secure-baseline/iam-ebs-secure-baselines` | every member account | IAM password policy (`org.password_policy`), EBS encryption by default (AWS managed key) |
 | `1-org/aws-secure-baseline/s3-baseline` | every member account | Account-level S3 Block Public Access |
-| `1-org/aws-secure-baseline/access-analyzer` | Security Tooling | Delegated admin and organization-wide external access analyzer |
+| `1-org/aws-secure-baseline/access-analyzer` | Security Tooling | Delegated admin for IAM Access Analyzer and the organization-wide **external access** analyzer `org-external-access` (the paid unused-access analyzer is not created) |
 
-Permission sets and assignments:
+Notes:
+
+- **Only one free copy of management events per account.** If the
+  management account already has its own trail logging management events,
+  the organization trail is a second copy there and is billed (about USD 2
+  per 100,000 events). Check before the first apply:
+  `aws cloudtrail describe-trails --query 'trailList[].[Name,IsOrganizationTrail,HomeRegion]'`.
+- **The baselines leave the management account out,** because it runs
+  existing workloads (account-level S3 Block Public Access would break any
+  public bucket there).
+- **Baselines need one provider and one module call per account** (Terraform
+  can't loop providers), as in the Ollion landing zone. A new account is
+  covered by adding both to `providers.tf` and `main.tf` of the two baseline
+  folders.
+- **Permission sets made by hand** are listed in
+  `org.existing_permission_sets` and imported (with their managed policy)
+  instead of created. `AdministratorAccess`, made for the bootstrap, is there.
+  The user `nasir@nasir.id` and its assignment, also made by hand, stay
+  outside Terraform; add the address to `permission_sets_principal` to bring
+  it in (and import the user first).
+- **Identity Center users** are created from the e-mails in
+  `permission_sets_principal` (user name = e-mail). If one of them already
+  exists in Identity Center, the apply fails for that user; delete it there
+  or tell Terraform to import it.
+
+Permission sets and assignments (from `org.access`; a target is
+`management`, an OU key covering every account in the OU and its sub-OUs,
+or an account key):
 
 | User (`permission_sets_principal`) | management | Log Archive, Security Tooling | Network Hub | Shared Services | Prod Master | NonProd Master |
 |---|---|---|---|---|---|---|
@@ -234,7 +296,11 @@ Gateway, Network Firewall, interconnect VPCs) and the DNS hub (Route 53
 Resolver endpoints), all billed by the hour. Each environment has its own
 VPC in `3-env` instead.
 
-### 3-env (GitHub Actions, to be written)
+### 3-env (GitHub Actions)
+
+Both folders call `terraform/modules/env-vpc`, which uses the `vpc` and
+`subnet` modules of nasir19noor/terraform (pinned to a commit). Settings are
+`env.<env>` in `lzconfig.yaml`.
 
 | | `3-env/prod/vpc` | `3-env/nonprod/vpc` |
 |---|---|---|
@@ -245,15 +311,17 @@ VPC in `3-env` instead.
 | Internet gateway | yes (free) | yes (free) |
 | NAT gateway | no | no |
 | S3 and DynamoDB gateway endpoints | yes (free) | yes (free) |
-| Default security group and NACL | locked down, as in the Ollion `env-vpc` | same |
+| Default security group | no rules (nothing allowed); resources use their own security groups | same |
 
-Without NAT, private subnets have no internet access; they reach S3 and
-DynamoDB through the gateway endpoints. VPC Flow Logs are off.
+Public subnets don't give instances a public IP automatically; ask for one
+per instance. Without NAT, private subnets have no internet access; they
+reach S3 and DynamoDB through the gateway endpoints. VPC Flow Logs are off.
 
 ## CI/CD
 
 [.github/workflows/terraform.yml](.github/workflows/terraform.yml), on
-`ubuntu-latest` with Terraform 1.14.3 (in place of Ollion's CodePipeline):
+`ubuntu-latest` with the Terraform version in `global.terraform_version`
+(in place of Ollion's CodePipeline):
 
 - **Pull request:** `terraform fmt -check` and `validate` for the changed
   folders, including `0-bootstrap/*`. No AWS access, because the role
@@ -283,6 +351,13 @@ What `0-bootstrap` and `1-org` create, checked against AWS pricing:
 | IAM OIDC provider, IAM role, policy attachment, STS sign-ins from CI | Free |
 | Organizations import, all features, SCP policy type, trusted access | Free; trusted access alone doesn't turn a service on |
 | OUs, SCPs, attachments, member accounts | Free |
+| CloudTrail bucket in Log Archive (SSE-S3, no KMS) | Storage only: management-event logs are small (MBs a month) |
+| Organization trail, management events only | Free (first copy per account), as long as the management account has no other trail logging management events |
+| AWS Budget without actions | Free |
+| Identity Center permission sets, users, assignments | Free |
+| Password policy, EBS default encryption, S3 account Block Public Access | Free |
+| IAM Access Analyzer, external access analyzer | Free (the unused-access analyzer, which is paid, isn't created) |
+| VPCs, subnets, route tables, internet gateways, S3/DynamoDB gateway endpoints, default security group | Free (no NAT gateway, no interface endpoints, no flow logs) |
 
 Everything here is free: Organizations, OUs, SCPs, IAM Identity Center,
 IAM, IAM Access Analyzer (external access), VPCs, subnets, internet

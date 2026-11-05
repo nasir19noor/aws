@@ -1,5 +1,5 @@
 # One member account and the SCPs attached to it. Creating an account is free.
-# close_on_deletion is off: removing it from Terraform doesn't close it;
+# With close_on_deletion off, removing it from Terraform doesn't close it;
 # close accounts by hand (move them to the Suspended OU first).
 
 resource "aws_organizations_account" "this" {
@@ -7,8 +7,8 @@ resource "aws_organizations_account" "this" {
   email                      = var.email
   parent_id                  = var.parent_id
   role_name                  = var.role_name
-  iam_user_access_to_billing = "ALLOW"
-  close_on_deletion          = false
+  iam_user_access_to_billing = var.iam_user_access_to_billing
+  close_on_deletion          = var.close_on_deletion
 
   lifecycle {
     # Only used at creation; AWS doesn't return them afterwards.

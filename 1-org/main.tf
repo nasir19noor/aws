@@ -61,4 +61,7 @@ module "account" {
   role_name       = local.switch_role
   policies        = local.policies
   attached_policy = each.value.scps
+
+  iam_user_access_to_billing = local.lz_config.org.account_defaults.iam_user_access_to_billing
+  close_on_deletion          = local.lz_config.org.account_defaults.close_on_deletion
 }
