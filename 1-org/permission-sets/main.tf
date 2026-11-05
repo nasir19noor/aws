@@ -81,7 +81,26 @@ resource "aws_ssoadmin_managed_policy_attachment" "this" {
 
 # --- Users ----------------------------------------------------------------------
 # Cloud Identity Free can't provision users to AWS, so they are created here.
-# The user name must equal the Google primary e-mail.
+# The user name must equal the Google primary e-mail. Users made by hand
+# (org.existing_users) are imported instead.
+
+data "aws_identitystore_user" "existing" {
+  for_each          = toset(local.org.existing_users)
+  identity_store_id = local.store_id
+
+  alternate_identifier {
+    unique_attribute {
+      attribute_path  = "UserName"
+      attribute_value = each.value
+    }
+  }
+}
+
+import {
+  for_each = data.aws_identitystore_user.existing
+  to       = aws_identitystore_user.this[each.key]
+  id       = "${local.store_id}/${each.value.user_id}"
+}
 
 resource "aws_identitystore_user" "this" {
   for_each          = local.emails
@@ -101,6 +120,21 @@ resource "aws_identitystore_user" "this" {
 }
 
 # --- Account assignments --------------------------------------------------------
+
+# Assignments made by hand (org.existing_assignments) are imported instead of
+# created; each must also follow from org.access.
+import {
+  for_each = { for a in local.org.existing_assignments : "${a.email} ${a.account} ${a.permission_set}" => a }
+  to       = aws_ssoadmin_account_assignment.this[each.key]
+  id = join(",", [
+    data.aws_identitystore_user.existing[each.value.email].user_id,
+    "USER",
+    local.account_id[each.value.account],
+    "AWS_ACCOUNT",
+    data.aws_ssoadmin_permission_set.existing[each.value.permission_set].arn,
+    local.instance_arn,
+  ])
+}
 
 resource "aws_ssoadmin_account_assignment" "this" {
   for_each           = local.assignments

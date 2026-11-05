@@ -65,8 +65,8 @@ org:
   # primary e-mail of a Cloud Identity user; 1-org/permission-sets creates the
   # matching Identity Center user (Cloud Identity Free can't provision it).
   permission_sets_principal:
-    organization_admin: "aws-admin@nasir.id"
-    billing_admin: "aws-billing@nasir.id"
+    organization_admin: ["aws-admin@nasir.id", "nasir@nasir.id"]
+    billing_admin: ["aws-billing@nasir.id", "nasir@nasir.id"]
     network_admin: "aws-network@nasir.id"
     security_admin: "aws-security@nasir.id"
     devops: "aws-devops@nasir.id"
@@ -89,6 +89,11 @@ org:
   # Permission sets that already exist in Identity Center (made by hand) and
   # are imported instead of created.
   existing_permission_sets: ["AdministratorAccess"]
+  # Users and assignments made by hand (for the bootstrap), imported instead of
+  # created. An assignment's permission set must be in existing_permission_sets.
+  existing_users: ["nasir@nasir.id"]
+  existing_assignments:
+    - { email: "nasir@nasir.id", account: "management", permission_set: "AdministratorAccess" }
 
   # Who gets which permission set where, by job role. A target is
   # "management", an OU key (every account in that OU and its sub-OUs, including

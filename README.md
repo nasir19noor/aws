@@ -19,9 +19,9 @@ The structure follows
   CodeBuild or CodeStar connection: GitHub Actions assumes a role in the
   management account through OIDC.
 
-> **Status:** `0-bootstrap` (both folders) and `1-org` are applied (6 member
-> accounts created). The `1-org/*` services and `3-env/*/vpc` are written and
-> deploy on the next push. This README is updated with every change.
+> **Status:** every stage is deployed: `0-bootstrap` (both folders), `1-org`
+> (6 member accounts), all `1-org/*` services and `3-env/{prod,nonprod}/vpc`.
+> This README is updated with every change.
 
 ## Decisions
 
@@ -268,9 +268,10 @@ Notes:
 - **Permission sets made by hand** are listed in
   `org.existing_permission_sets` and imported (with their managed policy)
   instead of created. `AdministratorAccess`, made for the bootstrap, is there.
-  The user `nasir@nasir.id` and its assignment, also made by hand, stay
-  outside Terraform; add the address to `permission_sets_principal` to bring
-  it in (and import the user first).
+  Users and assignments made by hand are listed in `org.existing_users` and
+  `org.existing_assignments` and imported the same way: `nasir@nasir.id` and
+  its AdministratorAccess on the management account. `nasir@nasir.id` is now
+  an organization admin and billing admin through `permission_sets_principal`.
 - **Access Analyzer's service-linked role** (`AWSServiceRoleForAccessAnalyzer`)
   must exist in the management account before an organization analyzer can
   be created; `access-analyzer` creates it (free). If it already exists, set
@@ -286,8 +287,8 @@ or an account key):
 
 | User (`permission_sets_principal`) | management | Log Archive, Security Tooling | Network Hub | Shared Services | Prod Master | NonProd Master |
 |---|---|---|---|---|---|---|
-| `aws-admin@nasir.id` (`organization_admin`) | AdministratorAccess | AdministratorAccess | AdministratorAccess | AdministratorAccess | AdministratorAccess | AdministratorAccess |
-| `aws-billing@nasir.id` (`billing_admin`) | Billing | | | | | |
+| `aws-admin@nasir.id`, `nasir@nasir.id` (`organization_admin`) | AdministratorAccess | AdministratorAccess | AdministratorAccess | AdministratorAccess | AdministratorAccess | AdministratorAccess |
+| `aws-billing@nasir.id`, `nasir@nasir.id` (`billing_admin`) | Billing | | | | | |
 | `aws-security@nasir.id` (`security_admin`) | ReadOnlyAccess | AdministratorAccess | ReadOnlyAccess | ReadOnlyAccess | ReadOnlyAccess | ReadOnlyAccess |
 | `aws-network@nasir.id` (`network_admin`) | | | AdministratorAccess | | PowerUserAccess | PowerUserAccess |
 | `aws-devops@nasir.id` (`devops`) | | | | PowerUserAccess | PowerUserAccess | PowerUserAccess |
