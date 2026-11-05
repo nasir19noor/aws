@@ -271,6 +271,10 @@ Notes:
   The user `nasir@nasir.id` and its assignment, also made by hand, stay
   outside Terraform; add the address to `permission_sets_principal` to bring
   it in (and import the user first).
+- **Access Analyzer's service-linked role** (`AWSServiceRoleForAccessAnalyzer`)
+  must exist in the management account before an organization analyzer can
+  be created; `access-analyzer` creates it (free). If it already exists, set
+  `org.access_analyzer.create_service_linked_role: false`.
 - **Identity Center users** are created from the e-mails in
   `permission_sets_principal` (user name = e-mail). If one of them already
   exists in Identity Center, the apply fails for that user; delete it there

@@ -45,6 +45,7 @@ org:
   access_analyzer:
     admin_account: "security_tooling_account"            # account key of the delegated administrator
     analyzer_name: "org-external-access"                 # organization-wide external access analyzer (free)
+    create_service_linked_role: true                     # AWSServiceRoleForAccessAnalyzer in the management account
 
   billing:
     budget_name: "org-monthly"
