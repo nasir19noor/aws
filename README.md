@@ -269,9 +269,11 @@ Notes:
   `org.existing_permission_sets` and imported (with their managed policy)
   instead of created. `AdministratorAccess`, made for the bootstrap, is there.
   Users and assignments made by hand are listed in `org.existing_users` and
-  `org.existing_assignments` and imported the same way: `nasir@nasir.id` and
-  its AdministratorAccess on the management account. `nasir@nasir.id` is now
-  an organization admin and billing admin through `permission_sets_principal`.
+  `org.existing_assignments` and imported the same way: the user
+  `nasir@nasir.id`. Its bootstrap access came through a hand-made "admin" group
+  (since deleted), not a user assignment, so `existing_assignments` is empty.
+  `nasir@nasir.id` is now an organization admin and billing admin through
+  `permission_sets_principal`; Terraform creates all its assignments.
 - **Access Analyzer's service-linked role** (`AWSServiceRoleForAccessAnalyzer`)
   must exist in the management account before an organization analyzer can
   be created; `access-analyzer` creates it (free). If it already exists, set

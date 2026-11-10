@@ -91,9 +91,10 @@ org:
   existing_permission_sets: ["AdministratorAccess"]
   # Users and assignments made by hand (for the bootstrap), imported instead of
   # created. An assignment's permission set must be in existing_permission_sets.
+  # nasir@nasir.id's bootstrap access came through a hand-made "admin" group
+  # (since deleted), not a user assignment, so there is nothing to import.
   existing_users: ["nasir@nasir.id"]
-  existing_assignments:
-    - { email: "nasir@nasir.id", account: "management", permission_set: "AdministratorAccess" }
+  existing_assignments: []
 
   # Who gets which permission set where, by job role. A target is
   # "management", an OU key (every account in that OU and its sub-OUs, including
